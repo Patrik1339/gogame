@@ -18,7 +18,8 @@ export default function App() {
     useEffect(() => {
         const checkAuth = async () => {
             try {
-                const response = await fetch("http://localhost:8080/gogame/me", {
+                const apiUrl = import.meta.env.VITE_API_URL || "http://localhost:8080";
+                const response = await fetch(`${apiUrl}/gogame/me`, {
                     method: "GET",
                     credentials: "include" 
                 })
@@ -48,7 +49,8 @@ export default function App() {
         const endpoint = isLoginView ? "/gogame/login" : "/gogame/register"
         
         try {
-            const response = await fetch(`http://localhost:8080${endpoint}`, {
+            const apiUrl = import.meta.env.VITE_API_URL || "http://localhost:8080";
+            const response = await fetch(`${apiUrl}${endpoint}`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ username: usernameInput, password: passwordInput }),

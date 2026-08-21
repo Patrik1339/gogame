@@ -24,6 +24,17 @@ func (r *PlayerRepository) Save(player *domain.Player) (*domain.Player, error) {
 	return player, nil
 }
 
+func (r *PlayerRepository) FindPlayerById(id int64) (*domain.Player, error) {
+	var player domain.Player
+
+	err := r.db.Where("id = ?", id).First(&player).Error
+	if err != nil {
+		return nil, err
+	}
+
+	return &player, nil
+}
+
 func (r *PlayerRepository) FindPlayerByUsername(username string) (*domain.Player, error) {
 	var player domain.Player
 

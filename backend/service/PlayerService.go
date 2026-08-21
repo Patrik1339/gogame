@@ -42,6 +42,10 @@ func (s *PlayerService) Save(username string, password string) (*domain.Player, 
 	return s.playerRepository.Save(newPlayer)
 }
 
+func (s *PlayerService) FindPlayerById(playerId int64) (*domain.Player, error) {
+	return s.playerRepository.FindPlayerById(playerId)
+}
+
 func (s *PlayerService) FindPlayerByUsername(username string) (*domain.Player, error) {
 	return s.playerRepository.FindPlayerByUsername(username)
 }

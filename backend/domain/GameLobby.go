@@ -2,11 +2,19 @@ package domain
 
 import "errors"
 
+type LobbyState string
+
+const (
+	Waiting        LobbyState = "WAITING"
+	GameInProgress LobbyState = "GAME_IN_PROGRESS"
+)
+
 type GameLobby struct {
 	ID         string
 	Host       *Player
 	Players    []*Player
 	MaxPlayers int
+	State      LobbyState
 }
 
 func NewGameLobby(id string, host *Player, maxPlayers int) *GameLobby {
@@ -15,6 +23,7 @@ func NewGameLobby(id string, host *Player, maxPlayers int) *GameLobby {
 		Host:       host,
 		Players:    make([]*Player, 0),
 		MaxPlayers: maxPlayers,
+		State:      Waiting,
 	}
 }
 
@@ -62,4 +71,8 @@ func (l *GameLobby) GetPlayerCount() int {
 
 func (l *GameLobby) IsFull() bool {
 	return len(l.Players) >= l.MaxPlayers
+}
+
+func (l *GameLobby) Start() {
+	l.State = GameInProgress
 }
