@@ -1,10 +1,12 @@
 package main
 
 import (
+	"context"
 	"embed"
 	"fmt"
 	"log"
 	"os"
+	"sync"
 
 	"github.com/Patrik1339/GoGame/controller"
 	"github.com/Patrik1339/GoGame/repository"
@@ -14,6 +16,7 @@ import (
 	"github.com/golang-migrate/migrate/v4/database/postgres"
 	"github.com/golang-migrate/migrate/v4/source/iofs"
 	"github.com/joho/godotenv"
+	"github.com/redis/go-redis/v9"
 	gorm_postgres "gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )
@@ -23,22 +26,35 @@ var migrationFiles embed.FS
 
 func main() {
 	loadEnv()
-
 	db := initDB()
-
 	runMigrations(db)
 
-	serverPort := os.Getenv("SERVER_PORT")
-	if serverPort == "" {
-		serverPort = "8080"
-	}
-	serverAddr := fmt.Sprintf(":%s", serverPort)
+	redisClient := initRedis()
 
-	gameServer := buildServer(serverAddr, db)
+	ports := []string{"8080", "8081"}
 
-	if err := gameServer.Start(); err != nil {
-		log.Fatalf("Server failed to start: %v", err)
+	var wg sync.WaitGroup
+
+	for _, port := range ports {
+		wg.Add(1)
+
+		serverAddr := fmt.Sprintf(":%s", port)
+
+		go func(addr string) {
+			defer wg.Done()
+
+			gameServer := buildServer(addr, db, redisClient)
+
+			log.Printf("Starting server on port %s...", addr)
+
+			if err := gameServer.Start(); err != nil {
+				log.Fatalf("Server on %s failed to start: %v", addr, err)
+			}
+		}(serverAddr)
 	}
+
+	log.Println("All servers are running.")
+	wg.Wait()
 }
 
 func loadEnv() {
@@ -89,7 +105,24 @@ func runMigrations(db *gorm.DB) {
 	log.Println("The migrations were successfully run!")
 }
 
-func buildServer(serverAddr string, db *gorm.DB) *server.Server {
+func initRedis() *redis.Client {
+	redisAddr := fmt.Sprintf("%s:%s", os.Getenv("REDIS_HOST"), os.Getenv("REDIS_PORT"))
+
+	rdb := redis.NewClient(&redis.Options{
+		Addr:     redisAddr,
+		Password: os.Getenv("REDIS_PASSWORD"),
+		DB:       0,
+	})
+
+	if _, err := rdb.Ping(context.Background()).Result(); err != nil {
+		log.Fatalf("Error connecting to Redis: %v", err)
+	}
+
+	log.Println("Redis connection successfully established!")
+	return rdb
+}
+
+func buildServer(serverAddr string, db *gorm.DB, redisClient *redis.Client) *server.Server {
 	playerRepo := repository.NewPlayerRepository(db)
 	gameRepo := repository.NewGameRepository(db)
 
@@ -97,7 +130,9 @@ func buildServer(serverAddr string, db *gorm.DB) *server.Server {
 	authService := service.NewAuthService(playerService)
 	gameService := service.NewGameService(gameRepo)
 
+	lobbyService := service.NewLobbyService(redisClient)
+
 	authController := controller.NewAuthController(authService)
 
-	return server.NewServer(serverAddr, authController, playerService, gameService)
+	return server.NewServer(serverAddr, authController, playerService, gameService, lobbyService)
 }

@@ -18,7 +18,8 @@ export default function Menu({ player }: MenuProps) {
     const [currentLobbyId, setCurrentLobbyId] = useState<string | null>(null);
 
     useEffect(() => {
-        const socket = new WebSocket("ws://localhost:8080/ws");
+        const socketUrl = import.meta.env.VITE_WS_URL || "ws://localhost:8080/ws";
+        const socket = new WebSocket(socketUrl);
 
         socket.onopen = () => {
             console.log("WebSocket connected in Menu");

@@ -1,0 +1,89 @@
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: admin
+      POSTGRES_DB: gogame
+    ports:
+      - "5433:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7-alpine
+    command: redis-server --requirepass "redis"
+    ports:
+      - "6379:6379"
+
+  backend-1:
+    build: 
+      context: ./backend
+      dockerfile: Dockerfile
+    restart: always
+    ports:
+      - "8080:8080"
+    environment:
+      - SERVER_PORT=8080
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_USER=postgres
+      - DB_PASS=admin
+      - DB_NAME=gogame
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD=redis
+      - JWT_SECRET=gogame_secret
+    depends_on:
+      - postgres
+      - redis
+
+  backend-2:
+    build: 
+      context: ./backend
+      dockerfile: Dockerfile
+    restart: always
+    ports:
+      - "8081:8081"
+    environment:
+      - SERVER_PORT=8081
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_USER=postgres
+      - DB_PASS=admin
+      - DB_NAME=gogame
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD=redis
+      - JWT_SECRET=gogame_secret
+    depends_on:
+      - postgres
+      - redis
+
+  frontend-1:
+    build: 
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    environment:
+      - VITE_API_URL=http://localhost:8080
+      - VITE_WS_URL=ws://localhost:8080/ws
+    depends_on:
+      - backend-1
+
+  frontend-2:
+    build: 
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "3001:3000" 
+    environment:
+      - VITE_API_URL=http://localhost:8081
+      - VITE_WS_URL=ws://localhost:8081/ws
+    depends_on:
+      - backend-2
+
+volumes:
+  pgdata:

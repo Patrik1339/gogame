@@ -12,6 +12,7 @@ import (
 	"github.com/Patrik1339/GoGame/service"
 	"github.com/Patrik1339/GoGame/utils"
 	"github.com/gorilla/websocket"
+	"google.golang.org/protobuf/proto"
 )
 
 var upgrader = websocket.Upgrader{
@@ -34,7 +35,7 @@ func (c *Client) writeMessage(msgType int, data []byte) error {
 
 type ClientRequest struct {
 	Client  *Client
-	Request dtos.WsRequest
+	Request *dtos.Message
 }
 
 type Server struct {
@@ -43,6 +44,7 @@ type Server struct {
 	authCtrl      *controller.AuthController
 	playerService *service.PlayerService
 	gameService   *service.GameService
+	lobbyService  *service.LobbyService
 
 	registerChan   chan *Client
 	unregisterChan chan int64
@@ -53,13 +55,14 @@ type Server struct {
 	gameLobbies sync.Map
 }
 
-func NewServer(addr string, authCtrl *controller.AuthController, playerService *service.PlayerService, gameService *service.GameService) *Server {
+func NewServer(addr string, authCtrl *controller.AuthController, playerService *service.PlayerService, gameService *service.GameService, lobbyService *service.LobbyService) *Server {
 	s := &Server{
 		addr:          addr,
 		mux:           http.NewServeMux(),
 		authCtrl:      authCtrl,
 		playerService: playerService,
 		gameService:   gameService,
+		lobbyService:  lobbyService,
 
 		registerChan:   make(chan *Client),
 		unregisterChan: make(chan int64),
@@ -91,6 +94,9 @@ func (s *Server) RunHub() {
 
 		case request := <-s.requestChan:
 			s.handleRequest(request)
+
+		case redisPayload := <-s.lobbyService.RedisMessages:
+			s.handleRedisMessage(redisPayload)
 		}
 	}
 }
@@ -107,36 +113,42 @@ func (s *Server) sendResponse(client *Client, response dtos.Response) {
 	}
 }
 
-func (s *Server) broadcastMessage(message []byte, excludedID int64) {
+func (s *Server) broadcastMessage(message []byte) {
 	s.clients.Range(func(key, value any) bool {
 		client, ok := value.(*Client)
 		if !ok {
 			return true
 		}
 
-		if client.Player.ID == excludedID {
-			return true
-		}
-
-		if err := client.writeMessage(websocket.TextMessage, message); err != nil {
+		if err := client.writeMessage(websocket.BinaryMessage, message); err != nil {
 			log.Printf("An error occurred while sending message to Player with id %d: %v", client.Player.ID, err)
 		}
+
 		return true
 	})
 }
 
 func (s *Server) handleRequest(request ClientRequest) {
 	switch request.Request.Type {
-	case dtos.GetGameLobbies:
+
+	case dtos.MessageType_GET_GAME_LOBBIES:
 		s.handleGetGameLobbies(request)
-	case dtos.CreateLobby:
-		s.handleCreateLobby(request)
-	case dtos.JoinLobby:
-		s.handleJoinLobby(request)
-	case dtos.StartGame:
-		s.handleStartGame(request)
+
+	case dtos.MessageType_CREATE_LOBBY:
+		payload := request.Request.GetCreateLobby()
+		s.handleCreateLobby(request.Client, payload)
+
+	case dtos.MessageType_JOIN_LOBBY:
+		payload := request.Request.GetJoinLobby()
+		s.handleJoinLobby(request.Client, payload)
+
+	case dtos.MessageType_START_GAME:
+		payload := request.Request.GetStartGame()
+		s.handleStartGame(request.Client, payload)
+
 	default:
-		log.Printf("Unknown request type received from Player with ID %d: %s", request.Client.Player.ID, request.Request.Type)
+		log.Printf("Unknown request type received from Player with ID %d: %v",
+			request.Client.Player.ID, request.Request.Type)
 	}
 }
 
@@ -154,17 +166,11 @@ func (s *Server) handleUnregister(playerId int64) {
 	}
 }
 
-func (s *Server) handleCreateLobby(request ClientRequest) {
-	var payload dtos.CreateLobbyPayload
-	err := json.Unmarshal(request.Request.Payload, &payload)
-	if err != nil {
-		log.Printf("An error occurred while decoding CreateLobbyPayload: %v", err)
-		s.sendResponse(request.Client, dtos.NewResponse(dtos.Error, dtos.ErrorPayload{Message: "An error occurred while decoding CreateLobbyPayload"}))
-		return
-	}
+func (s *Server) handleCreateLobby(client *Client, payload *dtos.CreateLobbyPayload) {
+	maxPlayers := int(payload.MaxPlayers)
 
-	if payload.MaxPlayers < 2 {
-		s.sendResponse(request.Client, dtos.NewResponse(dtos.Error, dtos.ErrorPayload{Message: "MaxPlayers must be >= 2"}))
+	if maxPlayers < 2 {
+		s.sendResponse(client, dtos.NewResponse(dtos.Error, dtos.ErrorPayload{Message: "MaxPlayers must be >= 2"}))
 		return
 	}
 
@@ -176,71 +182,67 @@ func (s *Server) handleCreateLobby(request ClientRequest) {
 		lobbyID = utils.GenerateLobbyID()
 	}
 
-	lobby := domain.NewGameLobby(lobbyID, request.Client.Player, payload.MaxPlayers)
-
-	_ = lobby.AddPlayer(request.Client.Player)
+	lobby := domain.NewGameLobby(lobbyID, client.Player, maxPlayers)
+	_ = lobby.AddPlayer(client.Player)
 
 	s.gameLobbies.Store(lobbyID, lobby)
-	log.Printf("New GameLobby with id %s created by %s (MaxPlayers: %d)", lobbyID, request.Client.Player.Username, payload.MaxPlayers)
+	log.Printf("New GameLobby with id %s created by %s (MaxPlayers: %d)", lobbyID, client.Player.Username, maxPlayers)
 
-	s.sendResponse(request.Client, dtos.NewResponse(dtos.Ok, dtos.LobbyCreatedPayload{LobbyID: lobbyID}))
+	s.sendResponse(client, dtos.NewResponse(dtos.Ok, dtos.LobbyCreatedPayload{LobbyID: lobbyID}))
 
 	broadcastResp := dtos.NewResponse(dtos.NewLobbyAvailable, map[string]any{
 		"lobby_id":      lobbyID,
-		"max_players":   payload.MaxPlayers,
-		"host_username": request.Client.Player.Username,
+		"max_players":   maxPlayers,
+		"host_username": client.Player.Username,
 	})
 
-	message, _ := json.Marshal(broadcastResp)
-	s.broadcastMessage(message, request.Client.Player.ID)
+	messageJSON, _ := json.Marshal(broadcastResp)
+
+	_ = s.lobbyService.PublishLobbyUpdate(string(messageJSON))
 }
 
-func (s *Server) handleJoinLobby(request ClientRequest) {
-	var payload dtos.JoinLobbyPayload
-	err := json.Unmarshal(request.Request.Payload, &payload)
-	if err != nil {
-		log.Printf("An error occurred while decoding JoinLobbyPayload: %v", err)
-		s.sendResponse(request.Client, dtos.NewResponse(dtos.Error, dtos.ErrorPayload{Message: "An error occurred while decoding JoinLobbyPayload"}))
+func (s *Server) handleJoinLobby(client *Client, payload *dtos.JoinLobbyPayload) {
+	lobbyID := payload.LobbyId
+
+	clientVal, exists := s.clients.Load(client.Player.ID)
+	if !exists {
+		log.Printf("Player with id %d not found", client.Player.ID)
+		s.sendResponse(client, dtos.NewResponse(dtos.Error, dtos.ErrorPayload{Message: "Player not found"}))
 		return
 	}
 
-	clientVal, exists := s.clients.Load(request.Client.Player.ID)
-	if !exists {
-		log.Printf("Player with id %d not found", request.Client.Player.ID)
-		s.sendResponse(request.Client, dtos.NewResponse(dtos.Error, dtos.ErrorPayload{Message: "Player not found"}))
-		return
-	}
 	player, ok := clientVal.(*Client)
 	if !ok {
 		return
 	}
 
-	lobbyVal, exists := s.gameLobbies.Load(payload.LobbyID)
+	lobbyVal, exists := s.gameLobbies.Load(lobbyID)
 	if !exists {
-		log.Printf("GameLobby with id %s doesn't exist", payload.LobbyID)
-		s.sendResponse(request.Client, dtos.NewResponse(dtos.Error, dtos.ErrorPayload{Message: "Lobby not found"}))
+		log.Printf("GameLobby with id %s doesn't exist", lobbyID)
+		s.sendResponse(client, dtos.NewResponse(dtos.Error, dtos.ErrorPayload{Message: "Lobby not found"}))
 		return
 	}
+
 	gameLobby, ok := lobbyVal.(*domain.GameLobby)
 	if !ok {
 		return
 	}
 
-	err = gameLobby.AddPlayer(player.Player)
+	err := gameLobby.AddPlayer(player.Player)
 	if err != nil {
-		log.Printf("Could not add Player %d to GameLobby %s: %v", request.Client.Player.ID, payload.LobbyID, err)
-		s.sendResponse(request.Client, dtos.NewResponse(dtos.Error, dtos.ErrorPayload{Message: err.Error()}))
+		log.Printf("Could not add Player %d to GameLobby %s: %v", client.Player.ID, lobbyID, err)
+		s.sendResponse(client, dtos.NewResponse(dtos.Error, dtos.ErrorPayload{Message: err.Error()}))
 		return
 	}
 
-	s.sendResponse(request.Client, dtos.NewResponse(dtos.Ok, dtos.LobbyJoinedPayload{LobbyID: payload.LobbyID}))
+	s.sendResponse(client, dtos.NewResponse(dtos.Ok, dtos.LobbyJoinedPayload{LobbyID: lobbyID}))
 
 	joinedLobbyDto := s.buildGameLobbyDTO(gameLobby)
-
 	updateNotif := dtos.NewResponse(dtos.PlayerJoinedLobby, joinedLobbyDto)
-	updateNotifMsg, _ := json.Marshal(updateNotif)
 
-	s.broadcastMessage(updateNotifMsg, -1)
+	updateNotifJSON, _ := json.Marshal(updateNotif)
+
+	_ = s.lobbyService.PublishLobbyUpdate(string(updateNotifJSON))
 }
 
 func (s *Server) buildGameLobbyDTO(gl *domain.GameLobby) dtos.GameLobbyDTO {
@@ -255,6 +257,82 @@ func (s *Server) buildGameLobbyDTO(gl *domain.GameLobby) dtos.GameLobbyDTO {
 		gl.MaxPlayers,
 		playerNames,
 	)
+}
+
+func (s *Server) handleRedisMessage(payload []byte) {
+	var message dtos.Message
+
+	err := proto.Unmarshal(payload, &message)
+	if err != nil {
+		log.Printf("An error occurred while decoding redis message using protobuf: %v", err)
+		return
+	}
+
+	switch message.Type {
+
+	case dtos.MessageType_NEW_LOBBY_AVAILABLE:
+		lobbyData := message.GetNewLobbyAvailable()
+
+		if _, exists := s.gameLobbies.Load(lobbyData.LobbyId); !exists {
+			player, err := s.playerService.FindPlayerById(lobbyData.HostId)
+
+			if err != nil {
+				log.Printf("An error occurred while searching for player with id: %d", lobbyData.HostId)
+				return
+			}
+
+			newLobby := domain.NewGameLobby(lobbyData.LobbyId, player, int(lobbyData.MaxPlayers))
+			s.gameLobbies.Store(lobbyData.LobbyId, newLobby)
+		}
+
+		s.broadcastMessage(payload)
+
+	case dtos.MessageType_PLAYER_JOINED_LOBBY:
+		joinData := message.GetPlayerJoined()
+
+		lobbyVal, exists := s.gameLobbies.Load(joinData.LobbyId)
+		if !exists {
+			log.Printf("No lobby found with id: %s", joinData.LobbyId)
+			return
+		}
+
+		gameLobby, ok := lobbyVal.(*domain.GameLobby)
+		if !ok {
+			log.Printf("Critical error: Object from map is not a *domain.GameLobby")
+			return
+		}
+
+		player := &domain.Player{
+			ID:       joinData.PlayerId,
+			Username: joinData.PlayerUsername,
+		}
+
+		_ = gameLobby.AddPlayer(player)
+
+		s.broadcastMessage(payload)
+
+	case dtos.MessageType_START_GAME:
+		startData := message.GetStartGame()
+
+		lobbyVal, exists := s.gameLobbies.Load(startData.LobbyId)
+		if !exists {
+			log.Printf("No lobby found with id: %s", startData.LobbyId)
+			return
+		}
+
+		gameLobby, ok := lobbyVal.(*domain.GameLobby)
+		if !ok {
+			log.Printf("Critical error: Object from map is not a *domain.GameLobby")
+			return
+		}
+
+		gameLobby.Start()
+
+		s.broadcastMessage(payload)
+
+	default:
+		log.Printf("Unknown redis message: %v", message.Type)
+	}
 }
 
 func (s *Server) broadcastToLobby(message []byte, lobby *domain.GameLobby) {
@@ -276,18 +354,12 @@ func (s *Server) broadcastToLobby(message []byte, lobby *domain.GameLobby) {
 	})
 }
 
-func (s *Server) handleStartGame(request ClientRequest) {
-	var payload dtos.StartGamePayload
-	err := json.Unmarshal(request.Request.Payload, &payload)
-	if err != nil {
-		log.Printf("An error occurred while decoding StartGamePayload: %v", err)
-		s.sendResponse(request.Client, dtos.NewResponse(dtos.Error, dtos.ErrorPayload{Message: "An error occurred while decoding StartGamePayload"}))
-		return
-	}
+func (s *Server) handleStartGame(client *Client, payload *dtos.StartGamePayload) {
+	lobbyID := payload.LobbyId
 
-	lobbyVal, exists := s.gameLobbies.Load(payload.LobbyID)
+	lobbyVal, exists := s.gameLobbies.Load(lobbyID)
 	if !exists {
-		s.sendResponse(request.Client, dtos.NewResponse(dtos.Error, dtos.ErrorPayload{Message: "Lobby not found"}))
+		s.sendResponse(client, dtos.NewResponse(dtos.Error, dtos.ErrorPayload{Message: "Lobby not found"}))
 		return
 	}
 	gameLobby, ok := lobbyVal.(*domain.GameLobby)
@@ -295,17 +367,18 @@ func (s *Server) handleStartGame(request ClientRequest) {
 		return
 	}
 
-	if gameLobby.Host.ID != request.Client.Player.ID {
-		s.sendResponse(request.Client, dtos.NewResponse(dtos.Error, dtos.ErrorPayload{Message: "Only host can start the game"}))
+	if gameLobby.Host.ID != client.Player.ID {
+		s.sendResponse(client, dtos.NewResponse(dtos.Error, dtos.ErrorPayload{Message: "Only host can start the game"}))
 		return
 	}
 
 	if len(gameLobby.Players) < 2 {
-		s.sendResponse(request.Client, dtos.NewResponse(dtos.Error, dtos.ErrorPayload{Message: "Not enough players to start"}))
+		s.sendResponse(client, dtos.NewResponse(dtos.Error, dtos.ErrorPayload{Message: "Not enough players to start"}))
 		return
 	}
 
 	gameID := utils.GenerateLobbyID() // Temporary Game ID
+
 	notif := dtos.NewResponse(dtos.GameStarted, dtos.GameStartedPayload{GameID: gameID})
 	notifMsg, _ := json.Marshal(notif)
 
@@ -370,17 +443,27 @@ func (s *Server) listenToPlayer(client *Client) {
 	}()
 
 	for {
-		var req dtos.WsRequest
-
-		err := client.Conn.ReadJSON(&req)
+		messageType, bazeBinare, err := client.Conn.ReadMessage()
 		if err != nil {
 			log.Printf("Connection closed for Player with id %d: %v", client.Player.ID, err)
 			break
 		}
 
+		if messageType != websocket.BinaryMessage {
+			log.Printf("Ignored non-binary message from Player %d", client.Player.ID)
+			continue
+		}
+
+		var req dtos.Message
+		err = proto.Unmarshal(bazeBinare, &req)
+		if err != nil {
+			log.Printf("Failed to unmarshal protobuf from Player %d: %v", client.Player.ID, err)
+			continue
+		}
+
 		s.requestChan <- ClientRequest{
 			Client:  client,
-			Request: req,
+			Request: &req,
 		}
 	}
 }
