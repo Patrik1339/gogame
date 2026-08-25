@@ -1,4 +1,3 @@
-```markdown
 # Go Multiplayer Game Server
 
 GoGame is a distributed multiplayer game application built with a Go backend and a React (Vite) frontend.
@@ -21,7 +20,7 @@ GoGame is a distributed multiplayer game application built with a Go backend and
 
 ## ⚙️ Configuration (.env)
 
-The application relies on a `.env` file located in the `backend/` directory (`backend/.env`). 
+The application relies on a `.env` file located in the `backend/` directory (`backend/.env`).
 
 ### Key Variables:
 - `SERVERS_COUNT`: The number of backend servers and frontend clients to spin up when testing locally.
@@ -34,32 +33,30 @@ To run the entire stack (PostgreSQL, Redis, multiple Backends, and multiple Fron
 
 ```bash
 docker compose up --build
-```
-This reads the `docker-compose.yaml` file, which has everything pre-configured.
+This reads the docker-compose.yaml file, which has everything pre-configured.
 
-## 💻 How to run WITHOUT Docker (Local Development)
-
+💻 How to run WITHOUT Docker (Local Development)
 If you want to run the Go backend and React frontend locally on your machine for easier debugging, you still need PostgreSQL and Redis running.
 
-1. **Start dependencies (Redis & Postgres) in Docker:**
-   ```bash
-   docker compose up -d redis postgres
-   ```
+Start dependencies (Redis & Postgres) in Docker:
 
-2. **Start the Backend:**
-   Open a terminal in the `backend/` directory:
-   ```bash
-   cd backend
-   go run .
-   ```
-   *This will automatically launch the number of servers defined in your `.env` file on consecutive ports.*
+Bash
+docker compose up -d redis postgres
+Start the Backend:
 
-3. **Start the Frontend Clients:**
-   Open another terminal in the `frontend/` directory:
-   ```bash
-   cd frontend
-   npm install
-   npm run clients
-   ```
-   *This will dynamically read the backend `.env` file and spawn consecutive Vite dev servers (on ports 3000, 3001, etc.), properly connected to their respective backend instances.*
-```
+Open a terminal in the backend/ directory:
+
+Bash
+cd backend
+go run .
+This will automatically launch the number of servers defined in your .env file on consecutive ports.
+
+Start the Frontend Clients:
+
+Open another terminal in the frontend/ directory:
+
+Bash
+cd frontend
+npm install
+npm run clients
+This will dynamically read the backend .env file and spawn consecutive Vite dev servers (on ports 3000, 3001, etc.), properly connected to their respective backend instances.
