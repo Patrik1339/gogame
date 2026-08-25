@@ -1,5 +1,6 @@
 import type { PlayerData } from "./App"
 import type { GameLobby } from "./Games"
+import { dtos } from "./proto/messages"
 
 interface LobbyProps {
     ws: WebSocket | null;
@@ -13,10 +14,11 @@ export default function Lobby({ ws, lobby, player }: LobbyProps) {
 
     const handleStartGame = () => {
         if (ws && ws.readyState === WebSocket.OPEN) {
-            ws.send(JSON.stringify({
-                type: "START_GAME",
-                payload: { lobby_id: lobby.id }
-            }));
+            const msg = dtos.Message.create({
+                type: dtos.MessageType.START_GAME,
+                startGame: { lobbyId: lobby.id }
+            });
+            ws.send(new Uint8Array(dtos.Message.encode(msg).finish()));
         }
     };
 

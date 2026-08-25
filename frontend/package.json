@@ -5,11 +5,14 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build",
+    "clients": "node start-clients.js",
+    "build": "npm run build:proto && tsc -b && vite build",
+    "build:proto": "pbjs -t static-module -w es6 -o src/proto/messages.js src/proto/messages.proto && pbts -o src/proto/messages.d.ts src/proto/messages.js",
     "lint": "oxlint",
     "preview": "vite preview"
   },
   "dependencies": {
+    "protobufjs": "^8.7.2",
     "react": "^19.2.8",
     "react-dom": "^19.2.8"
   },
@@ -19,6 +22,7 @@
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.4",
     "oxlint": "^1.75.0",
+    "protobufjs-cli": "^2.6.2",
     "typescript": "~6.0.2",
     "vite": "^8.2.0"
   }

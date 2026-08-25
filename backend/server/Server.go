@@ -74,11 +74,12 @@ func NewServer(addr string, authCtrl *controller.AuthController, playerService *
 }
 
 func (s *Server) setupRoutes() {
-	s.mux.HandleFunc("/gogame/me", s.authCtrl.MeHandler)
-	s.mux.HandleFunc("/gogame/login", s.authCtrl.LoginHandler)
-	s.mux.HandleFunc("/gogame/register", s.authCtrl.RegisterHandler)
+	s.mux.HandleFunc("GET /gogame/me", s.authCtrl.MeHandler)
+	s.mux.HandleFunc("POST /gogame/login", s.authCtrl.LoginHandler)
+	s.mux.HandleFunc("POST /gogame/register", s.authCtrl.RegisterHandler)
+	s.mux.HandleFunc("POST /gogame/logout", s.authCtrl.LogoutHandler)
 
-	s.mux.HandleFunc("/ws", s.handleWebSocket)
+	s.mux.HandleFunc("GET /ws", s.handleWebSocket)
 }
 
 func (s *Server) RunHub() {
@@ -190,15 +191,19 @@ func (s *Server) handleCreateLobby(client *Client, payload *dtos.CreateLobbyPayl
 
 	s.sendResponse(client, dtos.NewResponse(dtos.Ok, dtos.LobbyCreatedPayload{LobbyID: lobbyID}))
 
-	broadcastResp := dtos.NewResponse(dtos.NewLobbyAvailable, map[string]any{
-		"lobby_id":      lobbyID,
-		"max_players":   maxPlayers,
-		"host_username": client.Player.Username,
-	})
-
-	messageJSON, _ := json.Marshal(broadcastResp)
-
-	_ = s.lobbyService.PublishLobbyUpdate(string(messageJSON))
+	broadcastMsg := &dtos.Message{
+		Type: dtos.MessageType_NEW_LOBBY_AVAILABLE,
+		Payload: &dtos.Message_NewLobbyAvailable{
+			NewLobbyAvailable: &dtos.NewLobbyAvailableEvent{
+				LobbyId:      lobbyID,
+				MaxPlayers:   int32(maxPlayers),
+				HostId:       client.Player.ID,
+				HostUsername: client.Player.Username,
+			},
+		},
+	}
+	messageProto, _ := proto.Marshal(broadcastMsg)
+	_ = s.lobbyService.PublishLobbyUpdate(messageProto)
 }
 
 func (s *Server) handleJoinLobby(client *Client, payload *dtos.JoinLobbyPayload) {
@@ -237,12 +242,18 @@ func (s *Server) handleJoinLobby(client *Client, payload *dtos.JoinLobbyPayload)
 
 	s.sendResponse(client, dtos.NewResponse(dtos.Ok, dtos.LobbyJoinedPayload{LobbyID: lobbyID}))
 
-	joinedLobbyDto := s.buildGameLobbyDTO(gameLobby)
-	updateNotif := dtos.NewResponse(dtos.PlayerJoinedLobby, joinedLobbyDto)
-
-	updateNotifJSON, _ := json.Marshal(updateNotif)
-
-	_ = s.lobbyService.PublishLobbyUpdate(string(updateNotifJSON))
+	broadcastMsg := &dtos.Message{
+		Type: dtos.MessageType_PLAYER_JOINED_LOBBY,
+		Payload: &dtos.Message_PlayerJoined{
+			PlayerJoined: &dtos.PlayerJoinedLobbyEvent{
+				LobbyId:        lobbyID,
+				PlayerId:       client.Player.ID,
+				PlayerUsername: client.Player.Username,
+			},
+		},
+	}
+	messageProto, _ := proto.Marshal(broadcastMsg)
+	_ = s.lobbyService.PublishLobbyUpdate(messageProto)
 }
 
 func (s *Server) buildGameLobbyDTO(gl *domain.GameLobby) dtos.GameLobbyDTO {
@@ -282,6 +293,7 @@ func (s *Server) handleRedisMessage(payload []byte) {
 			}
 
 			newLobby := domain.NewGameLobby(lobbyData.LobbyId, player, int(lobbyData.MaxPlayers))
+			_ = newLobby.AddPlayer(player)
 			s.gameLobbies.Store(lobbyData.LobbyId, newLobby)
 		}
 
@@ -328,7 +340,7 @@ func (s *Server) handleRedisMessage(payload []byte) {
 
 		gameLobby.Start()
 
-		s.broadcastMessage(payload)
+		s.broadcastToLobby(payload, gameLobby)
 
 	default:
 		log.Printf("Unknown redis message: %v", message.Type)
@@ -377,12 +389,16 @@ func (s *Server) handleStartGame(client *Client, payload *dtos.StartGamePayload)
 		return
 	}
 
-	gameID := utils.GenerateLobbyID() // Temporary Game ID
-
-	notif := dtos.NewResponse(dtos.GameStarted, dtos.GameStartedPayload{GameID: gameID})
-	notifMsg, _ := json.Marshal(notif)
-
-	s.broadcastToLobby(notifMsg, gameLobby)
+	broadcastMsg := &dtos.Message{
+		Type: dtos.MessageType_START_GAME,
+		Payload: &dtos.Message_StartGame{
+			StartGame: &dtos.StartGamePayload{
+				LobbyId: lobbyID,
+			},
+		},
+	}
+	messageProto, _ := proto.Marshal(broadcastMsg)
+	_ = s.lobbyService.PublishLobbyUpdate(messageProto)
 }
 
 func (s *Server) handleGetGameLobbies(request ClientRequest) {
