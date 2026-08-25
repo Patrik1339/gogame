@@ -1,4 +1,5 @@
 import { useState } from "react"
+import { dtos } from "./proto/messages"
 
 export interface GameLobby {
     id: string;
@@ -20,20 +21,22 @@ export default function Games({ ws, lobbies }: GamesProps) {
     const handleCreateLobby = (e: React.FormEvent) => {
         e.preventDefault();
         if (ws && ws.readyState === WebSocket.OPEN) {
-            ws.send(JSON.stringify({
-                type: "CREATE_LOBBY",
-                payload: { max_players: newLobbyMaxPlayers }
-            }));
+            const msg = dtos.Message.create({
+                type: dtos.MessageType.CREATE_LOBBY,
+                createLobby: { maxPlayers: newLobbyMaxPlayers }
+            });
+            ws.send(new Uint8Array(dtos.Message.encode(msg).finish()));
             setIsCreateModalOpen(false);
         }
     };
 
     const handleJoinLobby = (lobbyId: string) => {
         if (ws && ws.readyState === WebSocket.OPEN) {
-            ws.send(JSON.stringify({
-                type: "JOIN_LOBBY",
-                payload: { lobby_id: lobbyId }
-            }));
+            const msg = dtos.Message.create({
+                type: dtos.MessageType.JOIN_LOBBY,
+                joinLobby: { lobbyId: lobbyId }
+            });
+            ws.send(new Uint8Array(dtos.Message.encode(msg).finish()));
         }
     };
 

@@ -77,6 +77,19 @@ export default function App() {
         }
     }
 
+    const handleLogout = async () => {
+        try {
+            const apiUrl = import.meta.env.VITE_API_URL || "http://localhost:8080";
+            await fetch(`${apiUrl}/gogame/logout`, {
+                method: "POST",
+                credentials: "include"
+            });
+            setPlayer(null);
+        } catch (error) {
+            console.error("Logout error:", error);
+        }
+    }
+
     if (isLoading) {
         return <div>Checking session...</div>
     }
@@ -84,7 +97,7 @@ export default function App() {
     return (
         <div style={{ padding: '20px' }}>
             {player ? (
-                <Menu player={player} /> 
+                <Menu player={player} onLogout={handleLogout} /> 
             ) : (
                 <div>
                     <h2>{isLoginView ? "Login" : "Register"}</h2>

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strconv"
 	"sync"
 
 	"github.com/Patrik1339/GoGame/controller"
@@ -31,14 +32,25 @@ func main() {
 
 	redisClient := initRedis()
 
-	ports := []string{"8080", "8081"}
+	startingPortStr := os.Getenv("SERVERS_STARTING_PORT")
+	serversCountStr := os.Getenv("SERVERS_COUNT")
+
+	startingPort, err := strconv.Atoi(startingPortStr)
+	if err != nil {
+		startingPort = 8080
+	}
+
+	serversCount, err := strconv.Atoi(serversCountStr)
+	if err != nil || serversCount <= 0 {
+		serversCount = 1
+	}
 
 	var wg sync.WaitGroup
 
-	for _, port := range ports {
+	for i := 0; i < serversCount; i++ {
 		wg.Add(1)
 
-		serverAddr := fmt.Sprintf(":%s", port)
+		serverAddr := fmt.Sprintf(":%d", startingPort+i)
 
 		go func(addr string) {
 			defer wg.Done()

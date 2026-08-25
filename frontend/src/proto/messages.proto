@@ -1,0 +1,61 @@
+syntax = "proto3";
+
+option go_package = "./dtos";
+
+package dtos;
+
+enum MessageType {
+    UNKNOWN = 0;
+    
+    GET_GAME_HISTORY = 1;
+    GET_GAME_LOBBIES = 2;
+    CREATE_LOBBY = 3;
+    JOIN_LOBBY = 4;
+    START_GAME = 5;
+    
+    NEW_LOBBY_AVAILABLE = 6;
+    PLAYER_JOINED_LOBBY = 7;
+}
+
+message CreateLobbyPayload {
+    int32 max_players = 1;
+}
+
+message JoinLobbyPayload {
+    string lobby_id = 1;
+}
+
+message StartGamePayload {
+    string lobby_id = 1;
+}
+
+message GetGameHistoryPayload {
+    int64 player_id = 1;
+}
+
+message NewLobbyAvailableEvent {
+    string lobby_id = 1;
+    int32 max_players = 2;
+    int64 host_id = 3;  
+    string host_username = 4;
+}
+
+message PlayerJoinedLobbyEvent {
+    string lobby_id = 1;
+    int64 player_id = 2; 
+    string player_username = 3;
+}
+
+message Message {
+    MessageType type = 1;
+    
+    oneof payload {
+        CreateLobbyPayload create_lobby = 2;
+        JoinLobbyPayload join_lobby = 3;
+        StartGamePayload start_game = 4;
+        GetGameHistoryPayload get_history = 5;
+        
+        NewLobbyAvailableEvent new_lobby_available = 6;
+        PlayerJoinedLobbyEvent player_joined = 7;
+    }
+}

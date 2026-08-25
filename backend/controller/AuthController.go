@@ -92,6 +92,21 @@ func (c *AuthController) MeHandler(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (c *AuthController) LogoutHandler(w http.ResponseWriter, r *http.Request) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     "jwt_token",
+		Value:    "",
+		Expires:  time.Now().Add(-1 * time.Hour),
+		HttpOnly: true,
+		Secure:   false,
+		Path:     "/",
+	})
+	
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]interface{}{"message": "Logged out successfully"})
+}
+
 func (c *AuthController) RegisterHandler(w http.ResponseWriter, r *http.Request) {
 	log.Println("Received Register request")
 	var registerRequest dtos.RegisterRequest

@@ -38,8 +38,8 @@ func (ls *LobbyService) startListening() {
 	}()
 }
 
-func (ls *LobbyService) PublishLobbyUpdate(lobbyDataJSON string) error {
-	err := ls.redisClient.Publish(ls.ctx, lobbyChannel, lobbyDataJSON).Err()
+func (ls *LobbyService) PublishLobbyUpdate(lobbyData []byte) error {
+	err := ls.redisClient.Publish(ls.ctx, lobbyChannel, lobbyData).Err()
 	if err != nil {
 		log.Printf("LobbyService: An error occurred while publishing to redis: %v", err)
 		return err

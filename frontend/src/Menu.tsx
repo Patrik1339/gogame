@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react"
+import { dtos } from "./proto/messages"
 import PlayerProfile from "./PlayerProfile"
 import Social from "./Social"
 import Games from "./Games"
@@ -8,9 +9,10 @@ import type { PlayerData } from "./App"
 
 interface MenuProps {
     player: PlayerData;
+    onLogout: () => void;
 }
 
-export default function Menu({ player }: MenuProps) {
+export default function Menu({ player, onLogout }: MenuProps) {
     const [activeTab, setActiveTab] = useState<"profile" | "social" | "games" | "lobby">("profile");
     
     const [ws, setWs] = useState<WebSocket | null>(null);
@@ -23,42 +25,63 @@ export default function Menu({ player }: MenuProps) {
 
         socket.onopen = () => {
             console.log("WebSocket connected in Menu");
-            socket.send(JSON.stringify({
-                type: "GET_GAME_LOBBIES",
-                payload: {}
-            }));
+            const msg = dtos.Message.create({
+                type: dtos.MessageType.GET_GAME_LOBBIES
+            });
+            socket.send(new Uint8Array(dtos.Message.encode(msg).finish()));
         };
 
-        socket.onmessage = (event) => {
+        socket.onmessage = async (event) => {
             try {
-                const response = JSON.parse(event.data);
-                
-                if (response.type === "OK" && response.payload) {
-                    if (response.payload.GameLobbyDTOs) {
-                        setLobbies(response.payload.GameLobbyDTOs);
-                    } else if (response.payload.lobby_id) {
-                        // Handles Create and Join ok responses
-                        setCurrentLobbyId(response.payload.lobby_id);
-                        setActiveTab("lobby");
-                        
-                        // Fetch the latest lobbies so the creator's lobby list is updated
-                        socket.send(JSON.stringify({
-                            type: "GET_GAME_LOBBIES",
-                            payload: {}
-                        }));
+                if (event.data instanceof Blob) {
+                    const arrayBuffer = await event.data.arrayBuffer();
+                    const message = dtos.Message.decode(new Uint8Array(arrayBuffer));
+                    
+                    if (message.type === dtos.MessageType.NEW_LOBBY_AVAILABLE) {
+                        const msg = dtos.Message.create({
+                            type: dtos.MessageType.GET_GAME_LOBBIES
+                        });
+                        socket.send(new Uint8Array(dtos.Message.encode(msg).finish()));
+                    } else if (message.type === dtos.MessageType.PLAYER_JOINED_LOBBY) {
+                        const joinData = message.playerJoined;
+                        if (joinData && joinData.playerUsername) {
+                            setLobbies(prevLobbies => prevLobbies.map(lobby => {
+                                if (lobby.id === joinData.lobbyId) {
+                                    if (lobby.players?.includes(joinData.playerUsername!)) {
+                                        return lobby;
+                                    }
+                                    return {
+                                        ...lobby,
+                                        player_count: lobby.player_count + 1,
+                                        players: lobby.players ? [...lobby.players, joinData.playerUsername!] : [joinData.playerUsername!]
+                                    };
+                                }
+                                return lobby;
+                            }));
+                        }
+                    } else if (message.type === dtos.MessageType.START_GAME) {
+                        alert("Game Started! ID: " + message.startGame?.lobbyId);
                     }
-                } else if (response.type === "NEW_LOBBY_AVAILABLE") {
-                    socket.send(JSON.stringify({
-                        type: "GET_GAME_LOBBIES",
-                        payload: {}
-                    }));
-                } else if (response.type === "PLAYER_JOINED_LOBBY") {
-                    const updatedLobby = response.payload as GameLobby;
-                    setLobbies(prevLobbies => prevLobbies.map(lobby => 
-                        lobby.id === updatedLobby.id ? updatedLobby : lobby
-                    ));
-                } else if (response.type === "GAME_STARTED") {
-                    alert("Game Started! ID: " + response.payload.game_id);
+                } else {
+                    const response = JSON.parse(event.data);
+                    
+                    if (response.type === "OK" && response.payload) {
+                        if (response.payload.GameLobbyDTOs) {
+                            setLobbies(response.payload.GameLobbyDTOs);
+                        } else if (response.payload.lobby_id) {
+                            // Handles Create and Join ok responses
+                            setCurrentLobbyId(response.payload.lobby_id);
+                            setActiveTab("lobby");
+                            
+                            // Fetch the latest lobbies so the creator's lobby list is updated
+                            const msg = dtos.Message.create({
+                                type: dtos.MessageType.GET_GAME_LOBBIES
+                            });
+                            socket.send(new Uint8Array(dtos.Message.encode(msg).finish()));
+                        }
+                    } else if (response.type === "GAME_STARTED") {
+                        alert("Game Started! ID: " + response.payload.game_id);
+                    }
                 }
             } catch (err) {
                 console.error("Error parsing WS message:", err);
@@ -87,6 +110,7 @@ export default function Menu({ player }: MenuProps) {
                 {currentLobby && (
                     <button onClick={() => setActiveTab("lobby")}>Lobby</button>
                 )}
+                <button onClick={onLogout} style={{ marginLeft: 'auto', backgroundColor: '#ff4d4d', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', padding: '5px 15px' }}>Logout</button>
             </div>
 
             <div style={{ border: '1px solid #ccc', padding: '20px', borderRadius: '8px' }}>
